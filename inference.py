@@ -162,7 +162,7 @@ def main(args):
 
     print("Starting batch inference...")
 
-    for image_path in tqdm(sorted((IN_ROOT / "image").rglob("*.jpg"))[:3], desc="Processing images"):
+    for image_path in tqdm(sorted((IN_ROOT / "image").rglob("*.jpg")), desc="Processing images"):
         # print(f"Processing image: {image_path}")
         # case name = first folder after "image/"
         try:
