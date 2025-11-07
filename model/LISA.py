@@ -425,3 +425,88 @@ class LISAForCausalLM(LlavaLlamaForCausalLM):
                 pred_masks.append(pred_mask[:, 0])
 
         return output_ids, pred_masks
+
+
+    def evaluate_with_iou(
+        self,
+        images_clip,
+        images,
+        input_ids,
+        resize_list,
+        original_size_list,
+        max_new_tokens=32,
+        tokenizer=None,
+    ):
+        with torch.no_grad():
+            outputs = self.generate(
+                images=images_clip,
+                input_ids=input_ids,
+                max_new_tokens=max_new_tokens,
+                num_beams=1,
+                output_hidden_states=True,
+                return_dict_in_generate=True,
+            )
+            output_hidden_states = outputs.hidden_states[-1]
+            output_ids = outputs.sequences
+
+            seg_token_mask = output_ids[:, 1:] == self.seg_token_idx
+            # hack for IMAGE_TOKEN_INDEX (we suppose that there is only one image, and it is in the front)
+            seg_token_mask = torch.cat(
+                [
+                    torch.zeros((seg_token_mask.shape[0], 255)).bool().cuda(),
+                    seg_token_mask,
+                ],
+                dim=1,
+            )
+
+            hidden_states = []
+
+            assert len(self.model.text_hidden_fcs) == 1
+            hidden_states.append(self.model.text_hidden_fcs[0](output_hidden_states))
+
+            last_hidden_state = torch.stack(hidden_states, dim=-1).sum(dim=-1)
+            pred_embeddings = last_hidden_state[seg_token_mask]
+
+            seg_token_counts = seg_token_mask.int().sum(-1)  # [bs, ]
+            seg_token_offset = seg_token_counts.cumsum(-1)
+            seg_token_offset = torch.cat(
+                [torch.zeros(1).long().cuda(), seg_token_offset], dim=0
+            )
+
+            pred_embeddings_ = []
+            for i in range(len(seg_token_offset) - 1):
+                start_i, end_i = seg_token_offset[i], seg_token_offset[i + 1]
+                pred_embeddings_.append(pred_embeddings[start_i:end_i])
+            pred_embeddings = pred_embeddings_
+
+            image_embeddings = self.get_visual_embs(images)
+
+            multimask_output = False
+            pred_masks = []
+            for i in range(len(pred_embeddings)):
+                (
+                    sparse_embeddings,
+                    dense_embeddings,
+                ) = self.model.visual_model.prompt_encoder(
+                    points=None,
+                    boxes=None,
+                    masks=None,
+                    text_embeds=pred_embeddings[i].unsqueeze(1),
+                )
+
+                sparse_embeddings = sparse_embeddings.to(pred_embeddings[i].dtype)
+                low_res_masks, iou_predictions = self.model.visual_model.mask_decoder(
+                    image_embeddings=image_embeddings[i].unsqueeze(0),
+                    image_pe=self.model.visual_model.prompt_encoder.get_dense_pe(),
+                    sparse_prompt_embeddings=sparse_embeddings,
+                    dense_prompt_embeddings=dense_embeddings,
+                    multimask_output=multimask_output,
+                )
+                pred_mask = self.model.visual_model.postprocess_masks(
+                    low_res_masks,
+                    input_size=resize_list[i],
+                    original_size=original_size_list[i],
+                )
+                pred_masks.append(pred_mask[:, 0])
+
+        return output_ids, pred_masks, iou_predictions

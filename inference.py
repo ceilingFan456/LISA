@@ -162,7 +162,7 @@ def main(args):
 
     print("Starting batch inference...")
 
-    for image_path in tqdm(sorted((IN_ROOT / "image").rglob("*.jpg")), desc="Processing images"):
+    for image_path in tqdm(sorted((IN_ROOT / "image").rglob("*.jpg"))[:3], desc="Processing images"):
         # print(f"Processing image: {image_path}")
         # case name = first folder after "image/"
         try:
@@ -232,7 +232,7 @@ def main(args):
             # ==============================================
 
             # ======= evaluation (unchanged) =======
-            output_ids, pred_masks = model.evaluate(
+            output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
                 image_clip,
                 image,
                 input_ids,
@@ -243,21 +243,32 @@ def main(args):
             )
             output_ids = output_ids[0][output_ids[0] != IMAGE_TOKEN_INDEX]
 
+            # print("Predicted IoU:", iou_predictions)
+
             text_output = tokenizer.decode(output_ids, skip_special_tokens=False)
             text_output = text_output.replace("\n", "").replace("  ", " ")
             # =====================================
 
             # ======= combine masks & save outputs =======
-            combined = None
-            for i, pred_mask in enumerate(pred_masks):
-                if pred_mask.shape[0] == 0:
-                    continue
-                m = pred_mask.detach().cpu().numpy()[0] > 0
-                combined = m if combined is None else (combined | m)
+            # combined = None
+            # for i, pred_mask in enumerate(pred_masks):
+            #     if pred_mask.shape[0] == 0:
+            #         continue
+            #     m = pred_mask.detach().cpu().numpy()[0] > 0
+            #     combined = m if combined is None else (combined | m)
 
-            if combined is None:
+            # if combined is None:
+            #     h, w = image_np.shape[:2]
+            #     combined = np.zeros((h, w), dtype=bool)
+
+            # Instead of combining all masks, just use the one with highest IoU
+            if len(pred_masks) == 0:
                 h, w = image_np.shape[:2]
                 combined = np.zeros((h, w), dtype=bool)
+            else:
+                best_idx = int(torch.argmax(iou_predictions).item())
+                pred_mask = pred_masks[best_idx]
+                combined = pred_mask.detach().cpu().numpy()[0] > 0
 
             # 1) save binary mask
             mask_dir = OUT_BASE / "mask" / case_name / code
