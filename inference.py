@@ -154,8 +154,11 @@ def main(args):
     # -------------------------
     from pathlib import Path
     PROMPT_TO_CODE = {"robot": "000", "gripper": "001", "robot arm": "002"}
-    IN_ROOT  = Path("/home/t-qimhuang/disk/robot_dataset/final_test_set/run5_test105")        # input root (has image/)
-    OUT_BASE = Path("/home/t-qimhuang/disk/robot_dataset/final_test_set/run5_test105_lisa")   # output base
+    # IN_ROOT  = Path("/home/t-qimhuang/disk/robot_dataset/final_test_set/run5_test105")        # input root (has image/)
+    # OUT_BASE = Path("/home/t-qimhuang/disk/robot_dataset/final_test_set/run5_test105_lisa")   # output base
+
+    IN_ROOT  = Path("/home/t-qimhuang/disk/robot_dataset/final_test_set/roboengine_test_video")        # input root (has image/)
+    OUT_BASE = Path("/home/t-qimhuang/disk/robot_dataset/final_test_set/roboengine_test_video_lisa")   # output base
 
     def _ensure_dir(d: Path):
         os.makedirs(d, exist_ok=True)
@@ -273,7 +276,7 @@ def main(args):
             # 1) save binary mask
             mask_dir = OUT_BASE / "mask" / case_name / code
             _ensure_dir(mask_dir)
-            mask_path = mask_dir / frame_name
+            mask_path = mask_dir / (frame_name.replace(".jpg", ".png"))
             ok = cv2.imwrite(str(mask_path), (combined.astype(np.uint8) * 255))
             if not ok:
                 print(f"[ERROR] Failed to save mask: {mask_path}")
