@@ -8,6 +8,8 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, BitsAndBytesConfig, CLIPImageProcessor
 from tqdm import tqdm
+from torch.profiler import profile, ProfilerActivity
+
 
 from model.LISA import LISAForCausalLM
 from model.llava import conversation as conversation_lib
@@ -149,6 +151,23 @@ def main(args):
 
     model.eval()
 
+    # ---- count parameters ----
+    def count_params(m):
+        return sum(p.numel() for p in m.parameters() if p.requires_grad)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = count_params(model)
+    print(f"Model total params: {total_params/1e6:.2f}M, trainable: {trainable_params/1e6:.2f}M")
+
+    try:
+        vt = model.get_model().get_vision_tower()
+        vt_total = sum(p.numel() for p in vt.parameters())
+        vt_trainable = count_params(vt)
+        print(f"Vision tower total params: {vt_total/1e6:.2f}M, trainable: {vt_trainable/1e6:.2f}M")
+    except Exception as e:
+        print(f"[WARN] Could not count vision tower params: {e}")
+    # ---- end ----
+
     # -------------------------
     # BATCH MODE (minimal edits)
     # -------------------------
@@ -235,15 +254,36 @@ def main(args):
             # ==============================================
 
             # ======= evaluation (unchanged) =======
-            output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
-                image_clip,
-                image,
-                input_ids,
-                resize_list,
-                original_size_list,
-                max_new_tokens=512,
-                tokenizer=tokenizer,
-            )
+            # output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
+            #     image_clip,
+            #     image,
+            #     input_ids,
+            #     resize_list,
+            #     original_size_list,
+            #     max_new_tokens=512,
+            #     tokenizer=tokenizer,
+            # )
+
+            with profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_flops=True
+            ) as prof:
+                with torch.no_grad():
+                    output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
+                        images_clip=image_clip,
+                        images=image,
+                        input_ids=input_ids,
+                        resize_list=resize_list,
+                        original_size_list=original_size_list,
+                        max_new_tokens=32,
+                        tokenizer=tokenizer,
+                    )
+
+            print(prof.key_averages().table(sort_by="flops", row_limit=30))
+            total_flops = sum(e.flops for e in prof.key_averages())
+            print("Total FLOPs:", total_flops)
+
             output_ids = output_ids[0][output_ids[0] != IMAGE_TOKEN_INDEX]
 
             # print("Predicted IoU:", iou_predictions)
