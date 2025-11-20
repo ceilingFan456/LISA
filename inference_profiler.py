@@ -12,6 +12,7 @@ from torch.profiler import profile, ProfilerActivity
 
 import time 
 
+
 from model.LISA import LISAForCausalLM
 from model.llava import conversation as conversation_lib
 from model.llava.mm_utils import tokenizer_image_token
@@ -68,9 +69,6 @@ def preprocess(
 def main(args):
     args = parse_args(args)
     os.makedirs(args.vis_save_path, exist_ok=True)
-
-    total_time = 0.0
-    total_cnt = 0
 
     # Create model
     tokenizer = AutoTokenizer.from_pretrained(
@@ -258,41 +256,35 @@ def main(args):
             # ==============================================
 
             # ======= evaluation (unchanged) =======
+            # output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
+            #     image_clip,
+            #     image,
+            #     input_ids,
+            #     resize_list,
+            #     original_size_list,
+            #     max_new_tokens=512,
+            #     tokenizer=tokenizer,
+            # )
 
-            t0 = time.time()
-            output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
-                image_clip,
-                image,
-                input_ids,
-                resize_list,
-                original_size_list,
-                max_new_tokens=512,
-                tokenizer=tokenizer,
-            )
-            t1 = time.time()
-            total_time += (t1 - t0)
-            total_cnt += image_clip.size(0)
-            print(f"[INFO] Inference time is {t1 - t0:.2f} seconds, running average is {total_time / total_cnt * 1e3:.4f} milliseconds per image.")
+            with profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_flops=True
+            ) as prof:
+                with torch.no_grad():
+                    output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
+                        images_clip=image_clip,
+                        images=image,
+                        input_ids=input_ids,
+                        resize_list=resize_list,
+                        original_size_list=original_size_list,
+                        max_new_tokens=32,
+                        tokenizer=tokenizer,
+                    )
 
-            # with profile(
-            #     activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            #     record_shapes=True,
-            #     with_flops=True
-            # ) as prof:
-            #     with torch.no_grad():
-            #         output_ids, pred_masks, iou_predictions = model.evaluate_with_iou(
-            #             images_clip=image_clip,
-            #             images=image,
-            #             input_ids=input_ids,
-            #             resize_list=resize_list,
-            #             original_size_list=original_size_list,
-            #             max_new_tokens=32,
-            #             tokenizer=tokenizer,
-            #         )
-
-            # print(prof.key_averages().table(sort_by="flops", row_limit=30))
-            # total_flops = sum(e.flops for e in prof.key_averages())
-            # print("Total FLOPs:", total_flops)
+            print(prof.key_averages().table(sort_by="flops", row_limit=30))
+            total_flops = sum(e.flops for e in prof.key_averages())
+            print("Total FLOPs:", total_flops)
 
             print(f"input_ids.shape: {input_ids.shape}, output_ids.shape: {output_ids.shape}")
             print(f"images_clip.shape: {image_clip.shape}, images.shape: {image.shape}")
